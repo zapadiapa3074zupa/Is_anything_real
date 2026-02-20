@@ -1,0 +1,333 @@
+local DrRayLibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/AZYsGithub/DrRay-UI-Library/main/DrRay.lua"))()
+local window = DrRayLibrary:Load("Faith.pub", "Default")
+
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local LogService = game:GetService("LogService")
+local Camera = workspace.CurrentCamera
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- // FULL CONFIGURATION //
+local settings = {
+    silentAim = {
+        Enabled = false,
+        HitPart = "Head",
+        MaxDistance = 2500,
+        TargetSleeping = true,
+        TargetScientists = false,
+        Fov = { 
+            Visible = false, 
+            Radius = 200, 
+            Color = Color3.fromRGB(255, 255, 255), 
+            Thickness = 1, 
+            Transparency = 1, 
+            Filled = true 
+        },
+        Snapline = { Enabled = true, Color = Color3.fromRGB(255, 255, 255) }
+    },
+    esp = {
+        Enabled = true,
+        Tracer = true,
+        Box = true,
+        Skeleton = true,
+        Distance = true,
+        Name = true,
+        Weapon = true,
+        Armor = true,
+        SleepCheck = true,
+        NoBot = false,
+        ShowCorpses = true,
+        ATV_Enabled = true
+    },
+    combat = {
+        HitboxEnabled = true,
+        HitPart = "Head",
+        HitboxSize = 8.4
+    },
+    misc = {
+        JumpShoot = true,
+        FarmNitrate = true,
+        FarmIron = true,
+        FarmStone = true,
+        HitIndicatorEnabled = false
+    }
+}
+
+-- // TABLES & HELPERS //
+local corpseESPDrawings = {}
+local activeIndicators = {}
+local originalSizes = {}
+local SleepAnimationId = "rbxassetid://13280887764"
+local SkeletonBones = {
+    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"}, {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"}, {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"}, {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}, {"RightLowerLeg", "RightFoot"}
+}
+
+local function getRainbow()
+    local time = tick()
+    local r, g, b = math.sin(time * 0.5) * 0.5 + 0.5, math.sin(time * 0.5 + 2) * 0.5 + 0.5, math.sin(time * 0.5 + 4) * 0.5 + 0.5
+    return Color3.fromRGB(r * 255, g * 255, b * 255)
+end
+
+local function IsSleeping(Player)
+    if not Player:FindFirstChild("AnimationController") then return false end
+    for _, v in pairs(Player.AnimationController:GetPlayingAnimationTracks()) do
+        if v.IsPlaying and v.Animation.AnimationId == SleepAnimationId then return true end
+    end
+    return false
+end
+
+local function PlayerWeapon(Player)
+    local Model = Player:FindFirstChildOfClass("Model")
+    return Model and Model:GetAttribute("RealName") or "None"
+end
+
+local function getHighestPriorityArmor(armorFolder)
+    if not armorFolder then return "No Armor" end
+    local priorityLevels = { Wood = 1, Riot = 2, Iron = 3, Steel = 4, Military = 5 }
+    local highest, armorType = 0, "No Armor"
+    for _, item in pairs(armorFolder:GetChildren()) do
+        for name, level in pairs(priorityLevels) do
+            if item.Name:find(name) and level > highest then highest = level; armorType = name end
+        end
+    end
+    return armorType
+end
+
+-- // CORE SCANNING //
+local players_data = {}
+local createProjectile
+for i, v in getgc() do
+    if typeof(v) == "function" and not iscclosure(v) then
+        local consts = debug.getconstants(v)
+        if consts[1] == "ProjectileSpeed" then createProjectile = v
+        elseif debug.info(v, "n") == "updatePlayers" then players_data = debug.getupvalue(v, 1) end
+    end
+end
+
+-- // HIT INDUCTOR LOGIC //
+local hitIndicatorGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+LogService.MessageOut:Connect(function(message)
+    if not settings.misc.HitIndicatorEnabled then return end
+    local target, distance, weapon = message:match("->(%w+)%s"), message:match("(%d+%.?%d*)s"), message:match("s%s*(%w+)%s*%d+%.?%d*%->")
+    if target and weapon and distance then
+        local hitLabel = Instance.new("TextLabel", hitIndicatorGui)
+        hitLabel.Size = UDim2.new(0, 450, 0, 17); hitLabel.BackgroundColor3 = Color3.new(0,0,0); hitLabel.TextColor3 = Color3.fromRGB(100, 100, 100)
+        hitLabel.Text = "Hit " .. target .. " with " .. weapon .. " from " .. distance .. "s"
+        hitLabel.Position = UDim2.new(0.5, 0, 0.85 - (#activeIndicators * 0.02), 0); hitLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+        hitLabel.Font = Enum.Font.Antique; hitLabel.RichText = true; hitLabel.TextScaled = true
+        local boxStroke = Instance.new("UIStroke", hitLabel)
+        boxStroke.Color = Color3.fromRGB(50, 50, 50); boxStroke.Thickness = 2
+        table.insert(activeIndicators, hitLabel)
+        task.delay(4, function() 
+            hitLabel:Destroy()
+            table.remove(activeIndicators, 1)
+            for i, lbl in ipairs(activeIndicators) do
+                lbl.Position = UDim2.new(0.5, 0, 0.85 - ((i-1) * 0.02), 0)
+            end
+        end)
+    end
+end)
+
+-- // UI TABS //
+local espTab = DrRayLibrary.newTab("ESP", "rbxassetid://4483345998")
+local combatTab = DrRayLibrary.newTab("Combat", "rbxassetid://4483345998")
+local miscTab = DrRayLibrary.newTab("Misc", "rbxassetid://4483345998")
+
+-- ESP Tab
+espTab.newToggle("Enable", "Master ESP", true, function(s) settings.esp.Enabled = s end)
+espTab.newToggle("Box", "Rainbow Box", true, function(s) settings.esp.Box = s end)
+espTab.newToggle("Skeleton", "Show Skeleton", true, function(s) settings.esp.Skeleton = s end)
+espTab.newToggle("Tracer", "Rainbow Tracer", true, function(s) settings.esp.Tracer = s end)
+espTab.newToggle("Name", "Show Name", true, function(s) settings.esp.Name = s end)
+espTab.newToggle("Weapon", "Show Weapon", true, function(s) settings.esp.Weapon = s end)
+espTab.newToggle("Armor", "Show Armor", true, function(s) settings.esp.Armor = s end)
+espTab.newToggle("Distance", "Show Distance", true, function(s) settings.esp.Distance = s end)
+espTab.newToggle("Sleep Check", "Filter Sleepers", true, function(s) settings.esp.SleepCheck = s end)
+espTab.newToggle("Bot Check", "Filter Shylou2644", false, function(s) settings.esp.NoBot = s end)
+espTab.newToggle("Corpse ESP", "Show Corpses", true, function(s) settings.esp.ShowCorpses = s end)
+
+-- Combat Tab
+combatTab.newToggle("Silent Aim", "Enable", false, function(s) settings.silentAim.Enabled = s end)
+combatTab.newDropdown("Aim Part", "Target", {"Head", "Torso"}, function(s) settings.silentAim.HitPart = s end)
+combatTab.newToggle("Draw FOV", "Visible", false, function(s) settings.silentAim.Fov.Visible = s end)
+combatTab.newSlider("FOV Radius", "Size", 500, false, function(s) settings.silentAim.Fov.Radius = s end)
+combatTab.newLabel("--- Hitbox ---")
+combatTab.newToggle("Hitbox", "Enable", true, function(s) settings.combat.HitboxEnabled = s end)
+combatTab.newDropdown("Hitbox Part", "Part", {"Torso", "Head"}, function(s) settings.combat.HitPart = s end)
+combatTab.newSlider("Hitbox Size", "Size", 20, true, function(s) settings.combat.HitboxSize = s end)
+
+-- Misc Tab
+miscTab.newToggle("Hit Inductor", "Hit Indicator", false, function(s) settings.misc.HitIndicatorEnabled = s end)
+miscTab.newButton("Drill Cool Down", "Insta Drill", function()
+    for _, v in getgc(true) do if type(v) == "table" and rawget(v, "type") == "MiningDrill" then v.AttackCooldown = 0 end end
+end)
+miscTab.newToggle("AUTO FARM", "Mining Bot", false, function(s) farmBot.enabled = s; if s then coroutine.wrap(farmBot.init)() end end)
+miscTab.newToggle("Farm Nitrate", "Nitrate", true, function(s) settings.misc.FarmNitrate = s end)
+miscTab.newToggle("Farm Iron", "Iron", true, function(s) settings.misc.FarmIron = s end)
+miscTab.newToggle("Farm Stone", "Stone", true, function(s) settings.misc.FarmStone = s end)
+miscTab.newButton("Jump Shoot", "Enable", function() hookfunction(getrenv()._G.classes.Character.IsGrounded, function() return true end) end)
+
+-- // RENDERER //
+local CustomDrawing = loadstring(game:HttpGet("https://raw.githubusercontent.com/Pumpuma/UKI/main/Mycustomdrawing.lua"))()
+local screenGui = Instance.new("ScreenGui", CoreGui)
+screenGui.IgnoreGuiInset = true
+
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness = 1; fovCircle.Filled = true; fovCircle.Color = Color3.new(1,1,1)
+
+RunService.RenderStepped:Connect(function()
+    screenGui:ClearAllChildren()
+    fovCircle.Visible = settings.silentAim.Fov.Visible and settings.silentAim.Enabled
+    fovCircle.Radius = settings.silentAim.Fov.Radius
+    fovCircle.Position = Camera.ViewportSize / 2
+
+    for _, drawing in pairs(corpseESPDrawings) do drawing.Visible = false end
+
+    if settings.esp.Enabled then
+        for _, model in pairs(Workspace:GetChildren()) do
+            -- Corpse ESP
+            if settings.esp.ShowCorpses then
+                local union = model:FindFirstChildOfClass("UnionOperation")
+                if union and union.Color == Color3.fromRGB(205, 205, 205) then
+                    local cf, _ = model:GetBoundingBox()
+                    local pos, vis = Camera:WorldToViewportPoint(cf.Position)
+                    if vis then
+                        if not corpseESPDrawings[model] then
+                            local t = Drawing.new("Text")
+                            t.Center, t.Outline, t.Size, t.Color = true, true, 16, Color3.new(1,1,1)
+                            corpseESPDrawings[model] = t
+                        end
+                        corpseESPDrawings[model].Visible = true
+                        corpseESPDrawings[model].Text = "Corpse ["..math.ceil((Camera.CFrame.Position - cf.Position).Magnitude/3.2).."m]"
+                        corpseESPDrawings[model].Position = Vector2.new(pos.X, pos.Y - 20)
+                    end
+                end
+            end
+
+            -- Player ESP
+            if model:IsA("Model") and model:FindFirstChild("HumanoidRootPart") and model ~= LocalPlayer.Character then
+                local head = model:FindFirstChild("Head")
+                if head then
+                    local nameTag = head:FindFirstChild("Nametag") and head.Nametag:FindFirstChild("tag")
+                    local pName = (nameTag and nameTag.Text ~= "") and nameTag.Text or model.Name
+                    
+                    if settings.esp.NoBot and pName == "Shylou2644" then continue end
+                    if settings.esp.SleepCheck and IsSleeping(model) then continue end
+                    
+                    local root = model.HumanoidRootPart
+                    local viewportPos, onScreen = Camera:WorldToViewportPoint(root.Position)
+                    if onScreen then
+                        local color = getRainbow()
+                        local dist = (Camera.CFrame.Position - root.Position).Magnitude
+                        local scale = 1 / (dist * math.tan(math.rad(Camera.FieldOfView * 0.5))) * 25
+                        local w, h = math.floor(45 * scale), math.floor(72 * scale)
+
+                        if settings.esp.Tracer then CustomDrawing.new("Line").create(screenGui, Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y), Vector2.new(viewportPos.X, viewportPos.Y), color, 1) end
+                        if settings.esp.Box then CustomDrawing.new("Square").create(screenGui, Vector2.new(viewportPos.X, viewportPos.Y), w, h, color, color, 1) end
+                        if settings.esp.Name then CustomDrawing.new("Text").create(screenGui, Vector2.new(viewportPos.X, viewportPos.Y - h/2 - 10), pName, color) end
+                        if settings.esp.Weapon then CustomDrawing.new("Text").create(screenGui, Vector2.new(viewportPos.X, viewportPos.Y + h/2 + 15), PlayerWeapon(model), color) end
+                        if settings.esp.Armor then CustomDrawing.new("Text").create(screenGui, Vector2.new(viewportPos.X, viewportPos.Y + h/2 + 30), getHighestPriorityArmor(model:FindFirstChild("Armor")), color) end
+                        if settings.esp.Distance then CustomDrawing.new("Text").create(screenGui, Vector2.new(viewportPos.X, viewportPos.Y + h/2 + 45), math.ceil(dist/3.2).."m", color) end
+                        
+                        if settings.esp.Skeleton then
+                            for _, bone in pairs(SkeletonBones) do
+                                local b1, b2 = model:FindFirstChild(bone[1]), model:FindFirstChild(bone[2])
+                                if b1 and b2 then
+                                    local p1, v1 = Camera:WorldToViewportPoint(b1.Position)
+                                    local p2, v2 = Camera:WorldToViewportPoint(b2.Position)
+                                    if v1 and v2 then CustomDrawing.new("Line").create(screenGui, Vector2.new(p1.X, p1.Y), Vector2.new(p2.X, p2.Y), color, 1) end
+                                end
+                            end
+                        end
+
+                        if settings.combat.HitboxEnabled then
+                            local hb = model:FindFirstChild(settings.combat.HitPart)
+                            if hb then
+                                hb.Size = Vector3.new(settings.combat.HitboxSize, settings.combat.HitboxSize, settings.combat.HitboxSize)
+                                hb.Transparency = 0.5; hb.CanCollide = false
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Camera = workspace.CurrentCamera
+
+local localPlayer = Players.LocalPlayer
+local freecam_enabled = false
+local cam_pos = Camera.CFrame.Position
+local cam_rot = Vector2.new(0, 0)
+
+-- Sensitivity Settings
+local move_speed = 1.5
+local look_speed = 0.05
+local deadzone = 0.15
+
+local function get_stick_input(stick)
+    local input = UIS:GetGamepadState(Enum.UserInputType.Gamepad1)
+    for _, v in pairs(input) do
+        if v.KeyCode == stick then
+            local pos = v.Position
+            if pos.Magnitude < deadzone then return Vector3.zero end
+            return pos
+        end
+    end
+    return Vector3.zero
+end
+
+-- Prevents character movement while in Freecam
+local function toggleCharacterPhysics(enabled)
+    local character = localPlayer.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        character.HumanoidRootPart.Anchored = enabled
+    end
+end
+
+local function UpdateFreecam()
+    if not freecam_enabled then return end
+    
+    local move_input = get_stick_input(Enum.KeyCode.Thumbstick1)
+    local look_input = get_stick_input(Enum.KeyCode.Thumbstick2)
+    
+    -- Rotation
+    cam_rot = cam_rot + Vector2.new(-look_input.X * look_speed, look_input.Y * look_speed)
+    cam_rot = Vector2.new(cam_rot.X, math.clamp(cam_rot.Y, -1.5, 1.5))
+    
+    local current_cf = CFrame.new(cam_pos) * CFrame.Angles(0, cam_rot.X, 0) * CFrame.Angles(cam_rot.Y, 0, 0)
+    
+    -- Movement
+    local move_dir = (current_cf.LookVector * move_input.Y) + (current_cf.RightVector * move_input.X)
+    cam_pos = cam_pos + (move_dir * move_speed)
+    
+    Camera.CFrame = current_cf
+end
+
+-- Toggle Logic (DPad Right)
+UIS.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.DPadRight then
+        freecam_enabled = not freecam_enabled
+        
+        if freecam_enabled then
+            cam_pos = Camera.CFrame.Position
+            Camera.CameraType = Enum.CameraType.Scriptable
+            toggleCharacterPhysics(true) -- Freeze real body
+            RunService:BindToRenderStep("FreecamUpdate", Enum.RenderPriority.Camera.Value + 1, UpdateFreecam)
+        else
+            RunService:UnbindFromRenderStep("FreecamUpdate")
+            toggleCharacterPhysics(false) -- Unfreeze real body
+            Camera.CameraType = Enum.CameraType.Custom
+        end
+    end
+end)
