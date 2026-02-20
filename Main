@@ -12,18 +12,18 @@ local LocalPlayer = Players.LocalPlayer
 -- // FULL CONFIGURATION //
 local settings = {
     silentAim = {
-        Enabled = false,
+        Enabled = true,
         HitPart = "Head",
         MaxDistance = 2500,
-        TargetSleeping = true,
-        TargetScientists = false,
+        TargetSleeping = false,
+        TargetScientists = true,
         Fov = { 
             Visible = false, 
             Radius = 200, 
             Color = Color3.fromRGB(255, 255, 255), 
             Thickness = 1, 
             Transparency = 1, 
-            Filled = true 
+            Filled = false 
         },
         Snapline = { Enabled = true, Color = Color3.fromRGB(255, 255, 255) }
     },
@@ -51,7 +51,7 @@ local settings = {
         FarmNitrate = true,
         FarmIron = true,
         FarmStone = true,
-        HitIndicatorEnabled = false
+        HitIndicator = false
     }
 }
 
